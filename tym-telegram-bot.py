@@ -1,12 +1,11 @@
 import os.path
 import re
 import os
-import json
+import csv
 from dotenv import load_dotenv
 import datetime
-import pytz
 
-from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, Bot
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -20,8 +19,9 @@ load_dotenv()
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 
 BOT_TOKEN = os.getenv('BOT_TOKEN')
-# GROUPCHAT_ID = os.getenv('GROUPCHAT_ID')
-GROUPCHAT_ID = os.getenv('GROUPCHAT_ID_2') # Send to test group
+GROUPCHAT_ID = os.getenv('GROUPCHAT_ID')
+# Send to test group
+# GROUPCHAT_ID = os.getenv('GROUPCHAT_ID_2')
 THEYOUNGMAKER_ID = os.getenv('THEYOUNGMAKER_ID')
 
 last_sent_message_id = None
@@ -72,36 +72,9 @@ def is_valid_date(input_date_str):
         return False
 
 def log_to_file(sent_text, message_id, chat_id, message_date):
-    # Convert message_date to Singapore time
-    sgt = pytz.timezone("Asia/Singapore")
-    sgt_datetime = message_date.astimezone(sgt)
-    formatted_sgt = sgt_datetime.strftime('%d %b %Y %H:%M') + "hrs"
-
-    # Create a dictionary with the log information
-    log_entry = {
-        "datetime": message_date,
-        "date": formatted_sgt,
-        "message_id": message_id,
-        "chat_id": chat_id,
-        "message_sent": sent_text
-    }
-
-    log_data = []
-
-    # Read existing log entries
-    try:
-        with open('message_log.json', 'r') as jsonfile:
-            log_data = json.load(jsonfile)
-    except FileNotFoundError:
-        # If the file does not exist, that's okay; we'll create it.
-        pass
-
-    # Append new log entry to the list
-    log_data.append(log_entry)
-
-    # Write log entries back to file
-    with open('message_log.json', 'w') as jsonfile:
-        json.dump(log_data, jsonfile, indent=4)
+    with open('message_log.csv', mode='a', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow([ message_date,  message_id, chat_id, sent_text])
 
 def remove_unsupported_tags(message):
 
@@ -213,7 +186,7 @@ async def send_message(update, context, chat_id, is_reply=False):
     global last_sent_message_id
     last_sent_message_id = sent_message.message_id
 
-    await bot.send_message(chat_id=update.message.chat_id, text=f"Message ID: {sent_message.message_id}, Group Chat ID: {sent_message.chat_id}")
+    await bot.send_message(chat_id=THEYOUNGMAKER_ID, text=f"Message ID: {sent_message.message_id}, Group Chat ID: {sent_message.chat_id}")
 
 # /schedule command to get schedule using reply; arg[0] (optional): date (YYYY-MM-DD)
 async def get_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
