@@ -323,8 +323,7 @@ async def postpone_event(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     postponed_sequence = int(match.group(1))
     max_sequence = int(match.group(2))
     
-    original_title = re.sub(r"\[\d+/\d+\]", "", event['summary']).strip()
-    event['summary'] = f"[POSTPONED] {original_title}"
+    event['summary'] = f"[POSTPONED] {event['summary']}"
     service.events().update(calendarId='primary', eventId=event_id, body=event).execute()
 
    # Adjust subsequent events
