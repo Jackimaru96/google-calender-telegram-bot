@@ -323,7 +323,7 @@ async def postpone_event(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     postponed_sequence = int(match.group(1))
     max_sequence = int(match.group(2))
     
-    original_title = event['summary']
+    original_title = re.sub(r"\[\d+/\d+\]", "", event['summary']).strip()
     event['summary'] = f"[POSTPONED] {original_title}"
     service.events().update(calendarId='primary', eventId=event_id, body=event).execute()
 
@@ -370,6 +370,7 @@ async def postpone_event(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     service.events().insert(calendarId='primary', body=additional_event).execute()
 
     await update.message.reply_text(f"Event '{original_title}' has been postponed and subsequent events updated.")
+
 
 if __name__ == "__main__":
     print('starting bot')
