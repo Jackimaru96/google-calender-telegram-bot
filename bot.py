@@ -303,6 +303,8 @@ async def add_event(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await update.message.reply_text(f"Recurring events for '{title}' have been added to the calendar!")
 
+
+# TODO: To make the last new added event also part of the recurring events
 async def postpone_event(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Postpone a recurring event and adjust subsequent events."""
     event_id = context.args[0]
