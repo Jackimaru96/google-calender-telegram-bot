@@ -18,14 +18,17 @@ load_dotenv()
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 
 BOT_TOKEN = os.getenv('BOT_TOKEN')
-GROUPCHAT_ID = os.getenv('GROUPCHAT_ID_2')
+GROUPCHAT_ID = os.getenv('GROUPCHAT_ID_2') # Use this for testing
+# GROUPCHAT_ID = os.getenv('GROUPCHAT_ID') # Use this for actual sending to group
 THEYOUNGMAKER_ID = os.getenv('THEYOUNGMAKER_ID')
 SOK_CALENDAR_ID = os.getenv('SOK_CALENDAR_ID')
 LL_CALENDAR_ID = os.getenv('LL_CALENDAR_ID')
 
-last_sent_message_id = None
-
-appended_reminder_message = """
+SOK_BRANCH_HEADER = "================ <b><u> Stars of Kovan Branch </u></b> ================\n\n"
+LL_BRANCH_HEADER = "================ <b><u> 35 Lowland Branch </u></b> ================\n\n"
+SOK_KEY = "SOK"
+LL_KEY = "LL"
+REMINDER_MSG = """
 ====================================
 Please arrive 5-10 mins before lesson starts.
 
@@ -53,6 +56,8 @@ Module name, lesson number
 Please react to lesson reminder message above to acknowledge your classes
 
 """
+
+last_sent_message_id = None
 
 def is_valid_date(input_date_str):
     try:
@@ -120,9 +125,9 @@ async def fetch_events(calendar_id, input_date_str, creds, service):
     return grouped_events
 
 async def send_message(update, context, chat_id, is_reply=False):
-    calendar_key = context.args[0] if context.args else 'SOK'
+    calendar_key = context.args[0] if context.args else SOK_KEY
     # Defaults to SOK calendar
-    calendar_id = LL_CALENDAR_ID if calendar_key == 'LL' else SOK_CALENDAR_ID
+    calendar_id = LL_CALENDAR_ID if calendar_key == LL_KEY else SOK_CALENDAR_ID
     input_date_str = context.args[1] if len(context.args) > 1 else None
     if input_date_str and not is_valid_date(input_date_str):
         input_date_str = None
@@ -133,10 +138,10 @@ async def send_message(update, context, chat_id, is_reply=False):
     grouped_events = await fetch_events(calendar_id, input_date_str, creds, service)
 
     final_message = ""
-    if(calendar_key == "SOK"):
-        final_message += "<b><u>Stars of Kovan Branch</u></b>\n\n"
+    if(calendar_key == SOK_KEY):
+        final_message += SOK_BRANCH_HEADER
     else:
-        final_message += "<b><u>35 Lowland Branch:</u></b>\n\n"
+        final_message += LL_BRANCH_HEADER
 
     for day, events in grouped_events.items():
         final_message += f"<b><u>{day}</u></b>\n\n"
@@ -154,21 +159,15 @@ async def send_message(update, context, chat_id, is_reply=False):
     log_to_file(sent_message.text, sent_message.message_id, sent_message.chat_id, sent_message.date)
     global last_sent_message_id
     last_sent_message_id = sent_message.message_id
-    await bot.send_message(chat_id=chat_id, text=appended_reminder_message, parse_mode="HTML")
+    await bot.send_message(chat_id=chat_id, text=REMINDER_MSG, parse_mode="HTML")
 
     await bot.send_message(chat_id=THEYOUNGMAKER_ID, text=f"Message ID: {sent_message.message_id}, Group Chat ID: {sent_message.chat_id}")
     print(f"Message with message id {sent_message.message_id} sent to group chat id {sent_message.chat_id}")
 
-async def get_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await send_message(update, context, None, is_reply=True)
-
-async def get_schedule_to_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await send_message(update, context, GROUPCHAT_ID)
-
 async def edit_last_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message_id = context.args[0] if context.args else None
-    calendar_key = context.args[1] if len(context.args) > 1 else 'SOK'
-    calendar_id = SOK_CALENDAR_ID if calendar_key == 'SOK' else LL_CALENDAR_ID
+    calendar_key = context.args[1] if len(context.args) > 1 else SOK_KEY
+    calendar_id = SOK_CALENDAR_ID if calendar_key == SOK_KEY else LL_CALENDAR_ID
     input_date_str = context.args[2] if len(context.args) > 2 and is_valid_date(context.args[2]) else None
 
     if message_id is None:
@@ -179,17 +178,31 @@ async def edit_last_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     service = build('calendar', 'v3', credentials=creds)
     grouped_events = await fetch_events(calendar_id, input_date_str, creds, service)
 
-    new_text = ""
+    # Get current date and time for the edit timestamp
+    edit_timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    new_text = f"<i>Message edited on {edit_timestamp}</i>\n\n"
+
+    if(calendar_key == SOK_KEY):
+        new_text += SOK_BRANCH_HEADER
+    else:
+        new_text += LL_BRANCH_HEADER
+    
     for day, events in grouped_events.items():
         new_text += f"<b><u>{day}</u></b>\n\n"
         for i, event in enumerate(events):
             new_text += f"{i+1}. {event}\n\n"
         new_text += "\n"
-    # new_text += appended_reminder_message
 
     bot = Bot(BOT_TOKEN)
     try:
+       # Editing the original message
         await bot.edit_message_text(chat_id=GROUPCHAT_ID, message_id=message_id, text=new_text, parse_mode='HTML')
+
+        # Sending a reply to the edited message indicating that it was updated
+        notification_message = f"🔄 Schedule updated at {edit_timestamp}.\n Please review the changes."
+        await bot.send_message(chat_id=GROUPCHAT_ID, text=notification_message, reply_to_message_id=message_id, parse_mode='HTML')
+
         await update.message.reply_html("Message has been edited successfully\n" + new_text)
         print(f"Message for message id {message_id} edited successfully")
     except Exception as e:
@@ -206,6 +219,12 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     '''
 
     await update.message.reply_text(help_message, parse_mode='MarkdownV2')
+
+async def get_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await send_message(update, context, None, is_reply=True)
+
+async def get_schedule_to_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await send_message(update, context, GROUPCHAT_ID)
 
 if __name__ == "__main__":
     print('starting bot')
