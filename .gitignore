@@ -4,3 +4,4 @@ token.json
 credentials_tym.json
 payments/
 archive/
+.DS_Store
