@@ -17,12 +17,13 @@ from googleapiclient.discovery import build
 #region environment variables
 load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKEN')
-GROUPCHAT_ID = os.getenv('GROUPCHAT_ID') # Use this for the actual group chat
-# GROUPCHAT_ID = os.getenv('TEST_GROUPCHAT_ID') # Use this for a testing group chat
+# GROUPCHAT_ID = os.getenv('GROUPCHAT_ID') # Use this for the actual group chat
+GROUPCHAT_ID = os.getenv('TEST_GROUPCHAT_ID') # Use this for a testing group chat
 
 # Rename constants to a different calendar ID if needed
 # This is based on specific use case where there are two calendars for vendor
-SOK_CALENDAR_ID = os.getenv('SOK_CALENDAR_ID')
+SOK_C_CALENDAR_ID = os.getenv('SOK_C_CALENDAR_ID')
+SOK_R_CALENDAR_ID = os.getenv('SOK_R_CALENDAR_ID')
 LL_CALENDAR_ID = os.getenv('LL_CALENDAR_ID')
 #endregion
 
@@ -30,9 +31,11 @@ LL_CALENDAR_ID = os.getenv('LL_CALENDAR_ID')
 PAYMENTS_EXCEL_FOLDER = "payments"
 TEACHERS_25_HOURLY_RATE = ["@hoobird"] # This list consists of telegram handles where the teacher's hourly rate is $25/hr instead of default $20/hr
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
-SOK_BRANCH_HEADER = "================ <b><u> Stars of Kovan Branch </u></b> ================\n\n"
+SOK_C_BRANCH_HEADER = "================ <b><u> Stars of Kovan Coding Classroom </u></b> ================\n\n"
+SOK_R_BRANCH_HEADER = "================ <b><u> Stars of Kovan Robotics Classroom </u></b> ================\n\n"
 LL_BRANCH_HEADER = "================ <b><u> 35 Lowland Branch </u></b> ================\n\n"
-SOK_KEY = "SOK"
+SOK_C_KEY = "SOKC"
+SOK_R_KEY = "SOKR"
 LL_KEY = "LL"
 REMINDER_MSG = """
 ====================================
@@ -136,7 +139,7 @@ async def fetch_calendar_events(calendar_id, input_date_str, creds, service, num
     if not events:
         print('No upcoming events found.')
         return []
-    
+
     return events
 #endregion
 
@@ -185,7 +188,7 @@ def calculate_payment(events, venue):
         tuple: A tuple containing:
             - data (list): List of payment data for individual events.
             - total_payments (dict): Dictionary of total payments for each teacher.
-    """ 
+    """
     data = []
     total_payments = {}
 
@@ -283,7 +286,80 @@ async def generate_payment_sheet_for_all_calendars(update: Update, context: Cont
 
     Returns:
         None
-    """ 
+    """
+    input_date_str = context.args[0] if len(context.args) > 0 else None
+    if input_date_str and not is_valid_date(input_date_str):
+        await update.message.reply_html("Date format is not valid.")
+        return
+
+    creds = get_google_credentials()
+    service = build('calendar', 'v3', credentials=creds)
+
+    all_payment_data = []
+    total_payments = {}
+
+    calendar_configs = [
+        (SOK_C_CALENDAR_ID, 'SOK-C'),
+        (SOK_R_CALENDAR_ID, 'SOK-R'),
+        (LL_CALENDAR_ID, 'LL'),
+    ]
+
+    for calendar_id, venue_name in calendar_configs:
+        events = await fetch_calendar_events(calendar_id, input_date_str, creds, service)
+        payment_data, totals = calculate_payment(events, venue=venue_name)
+
+        if all_payment_data:
+            all_payment_data += [[''] * 11]  # Blank row between venues
+        all_payment_data += payment_data
+
+        for teacher_handle, details in totals.items():
+            if teacher_handle in total_payments:
+                total_payments[teacher_handle]["amount"] += details["amount"]
+            else:
+                total_payments[teacher_handle] = details
+
+    # Append blank rows before summary
+    all_payment_data.append([''] * 12)
+    all_payment_data.append([''] * 12)
+
+    # Append total summary sorted by name
+    for teacher_handle, details in sorted(total_payments.items(), key=lambda item: item[1]["name"]):
+        all_payment_data.append(['', '', '', '', '', '', '', details["name"], teacher_handle, '', details["amount"], ''])
+
+    df = pd.DataFrame(all_payment_data, columns=[
+        'Venue', 'Date', 'Day', 'Course', 'Start Time', 'End Time', 'Number of hours',
+        'Teacher Name', 'Teacher Handle', 'Hourly Rate', 'Amount', 'Remarks'
+    ])
+
+    start_date = datetime.datetime.strptime(input_date_str, '%Y-%m-%d') if input_date_str else datetime.datetime.utcnow()
+    end_date = start_date + datetime.timedelta(days=7)
+    adjusted_end_date = start_date + datetime.timedelta(days=1)
+    file_name = f"Payment_{adjusted_end_date.strftime('%Y-%m-%d')}_{end_date.strftime('%Y-%m-%d')}.xlsx"
+
+    file_path = os.path.join(PAYMENTS_EXCEL_FOLDER, file_name)
+    df.to_excel(file_path, index=False)
+
+    # Send the generated file
+    bot = Bot(BOT_TOKEN)
+    try:
+        with open(file_path, 'rb') as file:
+            await bot.send_document(chat_id=update.message.chat_id, document=file, filename=file_name, caption="Payment sheet for all venues.")
+    except Exception as e:
+        await update.message.reply_html(f"Failed to send the payment sheet. Error: {str(e)}")
+        return
+
+    await update.message.reply_text("Payment sheet for all venues has been sent.")
+    """
+    Generates an excel file with payment details for staff based on Google Calendar description.
+    Sends excel file as a reply to user and also save the excel file in project root folder
+
+    Args:
+        update (Update): The Telegram Update object.
+        context (ContextTypes.DEFAULT_TYPE): The context object passed by the Telegram handler.
+
+    Returns:
+        None
+    """
     input_date_str = context.args[0] if len(context.args) > 0 else None
     if input_date_str and not is_valid_date(input_date_str):
         await update.message.reply_html("Date format is not valid.")
@@ -293,7 +369,7 @@ async def generate_payment_sheet_for_all_calendars(update: Update, context: Cont
     service = build('calendar', 'v3', credentials=creds)
 
     # Fetch events for SOK
-    sok_events = await fetch_calendar_events(SOK_CALENDAR_ID, input_date_str, creds, service)
+    sok_events = await fetch_calendar_events(SOK_C_CALENDAR_ID, input_date_str, creds, service)
     sok_payment_data, sok_totals = calculate_payment(sok_events, venue='SOK')
 
     # Fetch events for LL
@@ -322,7 +398,7 @@ async def generate_payment_sheet_for_all_calendars(update: Update, context: Cont
         payment_data.append(['', '', '', '', '', '', '', details["name"], teacher_handle, '', details["amount"], ''])
 
     df = pd.DataFrame(payment_data, columns=[
-        'Venue', 'Date', 'Day', 'Course', 'Start Time', 'End Time', 'Number of hours', 
+        'Venue', 'Date', 'Day', 'Course', 'Start Time', 'End Time', 'Number of hours',
         'Teacher Name', 'Teacher Handle', 'Hourly Rate', 'Amount', 'Remarks'
     ])
 
@@ -361,9 +437,22 @@ async def send_message(update, context, chat_id, is_reply=False):
     Returns:
         None
     """
-    calendar_key = context.args[0] if context.args else SOK_KEY
-    # Defaults to SOK calendar
-    calendar_id = LL_CALENDAR_ID if calendar_key == LL_KEY else SOK_CALENDAR_ID
+    calendar_key = context.args[0] if context.args else SOK_C_KEY
+
+    # Determine calendar ID and branch header based on the provided key
+    if calendar_key == SOK_C_KEY:
+        calendar_id = SOK_C_CALENDAR_ID
+        final_message = SOK_C_BRANCH_HEADER
+    elif calendar_key == SOK_R_KEY:
+        calendar_id = SOK_R_CALENDAR_ID
+        final_message = SOK_R_BRANCH_HEADER
+    elif calendar_key == LL_KEY:
+        calendar_id = LL_CALENDAR_ID
+        final_message = LL_BRANCH_HEADER
+    else:
+        calendar_id = SOK_C_CALENDAR_ID  # Default to SOK_C
+        final_message = SOK_C_BRANCH_HEADER
+
     input_date_str = context.args[1] if len(context.args) > 1 else None
     if input_date_str and not is_valid_date(input_date_str):
         input_date_str = None
@@ -373,19 +462,16 @@ async def send_message(update, context, chat_id, is_reply=False):
     service = build('calendar', 'v3', credentials=creds)
     events = await fetch_calendar_events(calendar_id, input_date_str, creds, service)
 
-    final_message = ""
-    if(calendar_key == SOK_KEY):
-        final_message += SOK_BRANCH_HEADER
-    else:
-        final_message += LL_BRANCH_HEADER
-
     formatted_events = get_formatted_events(events)
-    
-    for day, events in formatted_events.items():
-        final_message += f"<b><u>{day}</u></b>\n\n"
-        for i, event in enumerate(events):
-            final_message += f"{i+1}. {event}\n\n"
-        final_message += "\n"
+
+    if not formatted_events:
+        final_message += "\nNo lessons for this week at this venue.\n"
+    else:
+        for day, events in formatted_events.items():
+            final_message += f"<b><u>{day}</u></b>\n\n"
+            for i, event in enumerate(events):
+                final_message += f"{i+1}. {event}\n\n"
+            final_message += "\n"
 
     bot = Bot(BOT_TOKEN)
     if is_reply:
@@ -395,11 +481,12 @@ async def send_message(update, context, chat_id, is_reply=False):
 
     global LAST_SENT_MESSAGE_ID
     LAST_SENT_MESSAGE_ID = sent_message.message_id
-    await bot.send_message(chat_id=chat_id, text=REMINDER_MSG, parse_mode="HTML")
 
     user_chat_id = update.effective_user.id
     await bot.send_message(chat_id=user_chat_id, text=f"Message ID: {sent_message.message_id}, Group Chat ID: {sent_message.chat_id}")
     print(f"Message with message id {sent_message.message_id} sent to group chat id {sent_message.chat_id}")
+
+
 
 async def edit_message_in_groupchat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
@@ -413,12 +500,24 @@ async def edit_message_in_groupchat(update: Update, context: ContextTypes.DEFAUL
         None
     """
     message_id = context.args[0] if context.args else None
-    calendar_key = context.args[1] if len(context.args) > 1 else SOK_KEY
-    calendar_id = SOK_CALENDAR_ID if calendar_key == SOK_KEY else LL_CALENDAR_ID
+    calendar_key = context.args[1] if len(context.args) > 1 else SOK_C_KEY
     input_date_str = context.args[2] if len(context.args) > 2 and is_valid_date(context.args[2]) else None
 
     if message_id is None:
         await update.message.reply_text("Message Id is empty.")
+        return
+
+    if calendar_key == SOK_C_KEY:
+        calendar_id = SOK_C_CALENDAR_ID
+        branch_header = SOK_C_BRANCH_HEADER
+    elif calendar_key == SOK_R_KEY:
+        calendar_id = SOK_R_CALENDAR_ID
+        branch_header = SOK_R_BRANCH_HEADER
+    elif calendar_key == LL_KEY:
+        calendar_id = LL_CALENDAR_ID
+        branch_header = LL_BRANCH_HEADER
+    else:
+        await update.message.reply_text("Invalid calendar key provided.")
         return
 
     creds = get_google_credentials()
@@ -427,26 +526,24 @@ async def edit_message_in_groupchat(update: Update, context: ContextTypes.DEFAUL
 
     # Get current date and time for the edit timestamp
     edit_timestamp = datetime.datetime.now(ZoneInfo("Asia/Singapore")).strftime('%Y-%m-%d %H:%M:%S')
-    # edit_timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
     new_text = f"<i>Message updated on {edit_timestamp}</i>\n\n"
-
-    if(calendar_key == SOK_KEY):
-        new_text += SOK_BRANCH_HEADER
-    else:
-        new_text += LL_BRANCH_HEADER
+    new_text += branch_header
 
     formatted_events = get_formatted_events(events)
-    
-    for day, events in formatted_events.items():
-        new_text += f"<b><u>{day}</u></b>\n\n"
-        for i, event in enumerate(events):
-            new_text += f"{i+1}. {event}\n\n"
-        new_text += "\n"
+
+    if not formatted_events:
+        new_text += "\nNo lessons for this week at this venue.\n"
+    else:
+        for day, events in formatted_events.items():
+            new_text += f"<b><u>{day}</u></b>\n\n"
+            for i, event in enumerate(events):
+                new_text += f"{i+1}. {event}\n\n"
+            new_text += "\n"
 
     bot = Bot(BOT_TOKEN)
     try:
-       # Editing the original message
+        # Editing the original message
         await bot.edit_message_text(chat_id=GROUPCHAT_ID, message_id=message_id, text=new_text, parse_mode='HTML')
 
         # Sending a reply to the edited message indicating that it was updated
@@ -458,6 +555,15 @@ async def edit_message_in_groupchat(update: Update, context: ContextTypes.DEFAUL
     except Exception as e:
         await update.message.reply_html(f"Failed to edit message for message id {message_id}. Error: {str(e)}")
         print(f"Failed to edit message for message id {message_id}. Error: {str(e)}")
+
+
+
+async def send_reminder_message(update, context, chat_id, is_reply=False):
+    bot = Bot(BOT_TOKEN)
+    sent_message = await bot.send_message(chat_id=chat_id, text=REMINDER_MSG, parse_mode='HTML')
+    user_chat_id = update.effective_user.id
+    await bot.send_message(chat_id=user_chat_id, text=f"Message ID: {sent_message.message_id}, Group Chat ID: {sent_message.chat_id}")
+
 
 async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     help_message = '''
@@ -476,6 +582,9 @@ async def reply_with_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def send_schedule_to_groupchat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await send_message(update, context, GROUPCHAT_ID)
+
+async def send_reminder_message_to_groupchat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await send_reminder_message(update, context, GROUPCHAT_ID)
 #endregion
 
 if __name__ == "__main__":
@@ -483,9 +592,10 @@ if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("schedule", reply_with_schedule))
     app.add_handler(CommandHandler("send", send_schedule_to_groupchat))
+    app.add_handler(CommandHandler("sendrm", send_reminder_message_to_groupchat))
     app.add_handler(CommandHandler("edit", edit_message_in_groupchat))
     app.add_handler(CommandHandler("helpme", show_help))
-    app.add_handler(CommandHandler("paymentforall", generate_payment_sheet_for_all_calendars)) 
+    app.add_handler(CommandHandler("paymentforall", generate_payment_sheet_for_all_calendars))
     print("polling")
     app.run_polling(poll_interval=3)
 
